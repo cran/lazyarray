@@ -3,15 +3,20 @@ dir_create <- function(path, showWarnings = FALSE, recursive = TRUE, ...){
 }
 
 load_yaml <- function(path, ...){
-  yaml::read_yaml(path, ...)
+  read_yaml(path, ...)
 }
 
 
 save_yaml <- function(x, path, ...){
-  yaml::write_yaml(x, path, ...)
+  write_yaml(x, path, ...)
 }
 
 
 deparse1 <- function(..., collapse = ''){
   paste0(deparse(...), collapse = collapse)
 }
+
+rand_string <- function(length = 10){
+  paste(sample(c(letters, LETTERS, 0:9), length, replace = TRUE), collapse = '')
+}
+

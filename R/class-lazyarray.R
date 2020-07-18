@@ -1,7 +1,7 @@
 #' @title Internal Class definition for \code{LazyArray}
 #' @author Zhengjia Wang
 #' @description Internal class definition of lazy array objects
-LazyArray <- R6::R6Class(
+ClassLazyArray <- R6::R6Class(
   classname = "LazyArray",
   portable = TRUE,
   private = list(
@@ -11,6 +11,7 @@ LazyArray <- R6::R6Class(
     .dim = integer(0),
     .dimnames = NULL,
     .meta_name = 'lazyarray.meta',
+    .file_names = NULL,
     lazyarray_version = 0,
     file_format = 'fst',
     storage_format = character(0),
@@ -44,7 +45,8 @@ LazyArray <- R6::R6Class(
         prefix = private$prefix,
         part_dimension = private$part_dimension,
         postfix = private$postfix,
-        compress_level = private$compress_level
+        compress_level = private$compress_level,
+        file_names = private$.file_names
       )
       save_yaml(meta, private$.path)
     }
@@ -117,6 +119,39 @@ LazyArray <- R6::R6Class(
         private$part_dimension <- meta$part_dimension
       }
       
+      n_part <- meta$dim[[length(meta$dim)]]
+      if(length(meta$file_names) == 0){
+        # compatible with old format
+        if(private$partitioned){
+          private$.file_names <- seq_len(n_part)
+        }else{
+          private$.file_names <- ''
+        }
+      } else {
+        if(!private$partitioned){
+          if(length(meta$file_names) == 0 ){
+            private$.file_names <- ''
+          } else if( length(meta$file_names) != 1 || !is.character(meta$file_names) ){
+            stop('file_names invalid, either NULL or character(1) when multipart=FALSE')
+          } else {
+            private$.file_names <- meta$file_names
+          }
+        } else {
+          if(length(meta$file_names) == 0 ){
+            private$.file_names <- seq_len(n_part)
+          } else if( length(meta$file_names) != n_part ){
+            stop('file_names length invalid, either NULL or length of ',
+                 n_part, ' when multipart=TRUE')
+          } else {
+            if(any(duplicated(meta$file_names))){
+              stop('file_names has duplicated values')
+            }
+            private$.file_names <- meta$file_names
+          }
+        }
+      }
+      
+      
       if(length(meta$prefix) != 1){
         stop('Invalid prefix')
       }
@@ -151,16 +186,40 @@ LazyArray <- R6::R6Class(
     #' @param force whether to force remove the data
     #' @param warn whether to show warning if not fully cleaned
     remove_data = function(force = FALSE, warn = TRUE){
+      if(!private$.valid){ return(FALSE) }
       if(dir.exists(private$.dir)){
         if(force || file.exists(private$.path)){
-          unlink(private$.dir, recursive = TRUE)
+          
+          # list all files within .dir
+          fs <- c(self$get_partition_fpath(full_path = FALSE), private$.meta_name)
+          all_fs <- list.files(private$.dir, all.files = TRUE, 
+                               recursive = FALSE, full.names = FALSE, 
+                               include.dirs = TRUE)
+          
+          rest <- all_fs[!all_fs %in% c(fs, '.', '..')]
+          sel_metas <- grepl('\\.meta$', rest)
+          
+          if(!length(rest) || all(sel_metas)){
+            # cannot remove all files because some other files exist, 
+            # not created by me
+            unlink(private$.dir, recursive = TRUE)
+          } else {
+            lapply(fs, function(f){
+              f <- file.path(private$.dir, f)
+              if(file.exists(f)){
+                unlink(f)
+              }
+            })
+          }
           private$.valid <- FALSE
         }
       } else {
         private$.valid <- FALSE
       }
       if(warn && dir.exists(private$.dir)){
-        warning("LazyArray not fully cleaned at: ", private$.dir)
+        warning("LazyArray not fully cleaned at: ", private$.dir, 
+                '. Some files noted created by this array were detected. ',
+                'Please manually remove them if they are no longer used.')
       }
       return(!private$.valid)
     },
@@ -249,10 +308,12 @@ LazyArray <- R6::R6Class(
     #' @return Character file name or full path
     get_partition_fpath = function(part, full_path = TRUE){
       if(private$partitioned){
-        res <- sprintf('%s%d%s', private$prefix, part, private$postfix)
+        nm <- private$.file_names[part]
+        res <- sprintf('%s%s%s', private$prefix, nm, private$postfix)
       } else {
         # ignore part
-        res <- sprintf('%s%s', private$prefix, private$postfix)
+        nm <- private$.file_names[[1]]
+        res <- sprintf('%s%s%s', private$prefix, nm, private$postfix)
       }
       if(full_path){
         res <- file.path(private$.dir, res)
